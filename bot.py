@@ -281,7 +281,8 @@ async def show_pending_orders(message: Message):
         if order['comment']:
             text += get_text(lang, 'order_comment', comment=order['comment'])
 
-        text += f"\n\n💰 {get_text(lang, 'order_total', price=f'{order["total_price"]:,.0f}')}"
+        total_price = f"{order['total_price']:,.0f}"
+        text += f"\n\n💰 {get_text(lang, 'order_total', price=total_price)}"
 
         await message.answer(
             text,
