@@ -3,182 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#0a0e27">
+    <meta name="theme-color" content="#0a0e17">
     <title>Choy Plov</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <span style="font-size: 24px;">🍽</span>
-                <h1>Choy Plov</h1>
-            </div>
-            <div class="cart-icon" onclick="showCart()">
-                🛒 <span id="cart-count">0</span>
-            </div>
-        </header>
-
-        <!-- Tab Navigation -->
-        <div class="tab-nav">
-            <button class="tab-btn active" data-tab="menu">🍽 Plovlar</button>
-            <button class="tab-btn" data-tab="drinks">☕ Choy</button>
+    <!-- Header -->
+    <header class="app-header">
+        <div class="logo">
+            <div class="logo-icon">🍲</div>
+            <span>Choy Plov</span>
         </div>
+        <button class="cart-btn" onclick="showCart()">
+            🛒 <span class="cart-badge" id="cart-count">0</span>
+        </button>
+    </header>
 
-        <!-- Categories Section -->
-        <section class="categories" id="categories-section">
-            <h2>📂 Kategoriyalar</h2>
-            <div id="categories-list" class="categories-grid">
-                <div class="loading">
-                    <div class="spinner"></div>
-                    <p>Yuklanmoqda...</p>
-                </div>
-            </div>
+    <!-- Asosiy sahifalar -->
+    <main id="main-content">
+        <section id="page-menu" class="page active">
+            <div class="categories-bar" id="categories"></div>
+            <div class="products-grid" id="products"></div>
         </section>
 
-        <!-- Products Section -->
-        <section class="products hidden" id="products-section">
-            <div class="back-btn" onclick="showCategories()">
-                ← Ortga
+        <section id="page-orders" class="page">
+            <h2 class="page-title">📋 Buyurtmalar</h2>
+            <div class="filter-tabs">
+                <button class="filter-tab active" onclick="filterOrders('all', this)">Barchasi</button>
+                <button class="filter-tab" onclick="filterOrders('pending', this)">Kutilmoqda</button>
+                <button class="filter-tab" onclick="filterOrders('completed', this)">Tasdiqlangan</button>
+                <button class="filter-tab" onclick="filterOrders('cancelled', this)">Bekor</button>
             </div>
-            <h2 id="category-title"></h2>
-            <div id="products-list" class="products-grid"></div>
+            <div id="orders-list" class="orders-list"></div>
         </section>
 
-        <!-- Product Detail Modal -->
-        <div class="modal" id="product-modal">
-            <div class="modal-content">
-                <span class="close" onclick="closeProductModal()">&times;</span>
+        <section id="page-profile" class="page">
+            <h2 class="page-title">👤 Profil</h2>
+            <div id="profile-content"></div>
+        </section>
+    </main>
 
-                <div class="product-image" id="modal-product-image" style="width: 100%; height: 200px; margin-bottom: 20px;">
-                    📸
-                </div>
+    <!-- Pastki navigatsiya -->
+    <nav class="bottom-nav">
+        <button class="nav-btn active" onclick="switchTab('menu', this)">
+            <span>🍽</span><small>Menyu</small>
+        </button>
+        <button class="nav-btn" onclick="switchTab('orders', this)">
+            <span>📋</span><small>Buyurtmalar</small>
+        </button>
+        <button class="nav-btn" onclick="switchTab('profile', this)">
+            <span>👤</span><small>Profil</small>
+        </button>
+    </nav>
 
-                <h2 id="modal-product-name"></h2>
-                <p id="modal-product-description"></p>
-                <p class="price" id="modal-product-price"></p>
-
-                <div class="quantity-selector">
-                    <label>Miqdor:</label>
-                    <div class="quantity-controls">
-                        <button onclick="changeQuantity(-1)">−</button>
-                        <input type="number" id="quantity" value="1" min="1" readonly>
-                        <button onclick="changeQuantity(1)">+</button>
-                    </div>
-                </div>
-
-                <div class="addons">
-                    <h3>Qo'shimchalar:</h3>
-                    <div class="addon-item">
-                        <input type="checkbox" name="addon" value="meat" id="addon-meat">
-                        <label for="addon-meat">🍖 Go'sht (+15,000 so'm)</label>
-                    </div>
-                    <div class="addon-item">
-                        <input type="checkbox" name="addon" value="egg" id="addon-egg">
-                        <label for="addon-egg">🥚 Tuxum (+5,000 so'm)</label>
-                    </div>
-                    <div class="addon-item">
-                        <input type="checkbox" name="addon" value="qazi" id="addon-qazi">
-                        <label for="addon-qazi">🧀 Qazi (+20,000 so'm)</label>
-                    </div>
-                </div>
-
-                <button class="btn-primary" onclick="addToCart()">
-                    <span>🛒</span> Savatchaga qo'shish
-                </button>
+    <!-- Savat modali -->
+    <div class="modal" id="cart-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🛒 Savat</h3>
+                <button class="close-btn" onclick="hideCart()">✕</button>
             </div>
-        </div>
-
-        <!-- Cart Modal -->
-        <div class="modal" id="cart-modal">
-            <div class="modal-content">
-                <span class="close" onclick="closeCart()">&times;</span>
-                <h2>🛒 Savat</h2>
-                <div id="cart-items"></div>
-                <div class="cart-total">
-                    <h3>
-                        <span>Jami:</span>
-                        <span id="cart-total">0 so'm</span>
-                    </h3>
+            <div id="cart-items" class="cart-items"></div>
+            <div class="cart-summary">
+                <div class="summary-row">
+                    <span>Jami:</span>
+                    <strong id="cart-total">0 so'm</strong>
                 </div>
-                <button class="btn-primary" onclick="checkout()">
-                    ✅ Buyurtma berish
-                </button>
-            </div>
-        </div>
-
-        <!-- Checkout Modal -->
-        <div class="modal" id="checkout-modal">
-            <div class="modal-content">
-                <span class="close" onclick="closeCheckout()">&times;</span>
-                <h2>📦 Buyurtma rasmiylashtirish</h2>
-
-                <div class="form-group">
-                    <label>📱 Telefon raqam:</label>
-                    <input type="tel" id="phone" placeholder="+998 90 123 45 67" required>
-                </div>
-
-                <div class="form-group">
-                    <label>📍 Yetkazib berish manzili:</label>
-                    <textarea id="address" rows="3" placeholder="Toshkent, Mirzo Ulug'bek tumani, 12-uy" required></textarea>
-                </div>
-
-                <div class="form-group">
-                    <label>💬 Izoh (ixtiyoriy):</label>
-                    <textarea id="comment" rows="2" placeholder="Qo'shimcha ma'lumot..."></textarea>
-                </div>
-
-                <div class="order-summary">
-                    <h3>📋 Buyurtma:</h3>
-                    <div id="checkout-items"></div>
-                    <div class="checkout-total">
-                        <strong>Jami:</strong>
-                        <span id="checkout-total">0 so'm</span>
-                    </div>
-                </div>
-
-                <button class="btn-primary" onclick="confirmOrder()">
-                    ✅ Tasdiqlash va yuborish
-                </button>
-            </div>
-        </div>
-
-        <!-- Success Modal -->
-        <div class="modal" id="success-modal">
-            <div class="modal-content success">
-                <div class="success-icon">✅</div>
-                <h2>Buyurtma qabul qilindi!</h2>
-                <p>Buyurtma raqami: <strong>#<span id="order-number"></span></strong></p>
-                <p>Tez orada operatorlarimiz siz bilan bog'lanishadi.</p>
-                <button class="btn-primary" onclick="closeSuccess()">
-                    Yopish
-                </button>
-            </div>
-        </div>
-
-        <!-- Bottom Navigation -->
-        <div class="bottom-nav">
-            <div class="nav-item active" onclick="showSection('menu')">
-                <div class="icon">🍽</div>
-                <span>Menyu</span>
-            </div>
-            <div class="nav-item" onclick="showSection('favorites')">
-                <div class="icon">❤️</div>
-                <span>Sevimli</span>
-            </div>
-            <div class="nav-item" onclick="showSection('orders')">
-                <div class="icon">📦</div>
-                <span>Buyurtmalar</span>
-            </div>
-            <div class="nav-item" onclick="showSection('profile')">
-                <div class="icon">👤</div>
-                <span>Profil</span>
+                <button class="btn-primary" onclick="openCheckout()">Buyurtma berish</button>
             </div>
         </div>
     </div>
 
+    <!-- Checkout modali -->
+    <div class="modal" id="checkout-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Buyurtmani rasmiylashtirish</h3>
+                <button class="close-btn" onclick="closeCheckout()">✕</button>
+            </div>
+            <div class="form-group">
+                <label>📞 Telefon raqam</label>
+                <input type="tel" id="input-phone" placeholder="+998901234567">
+            </div>
+            <div class="form-group">
+                <label>📍 Manzil</label>
+                <input type="text" id="input-address" placeholder="Toshkent, Chilonzor">
+            </div>
+            <div class="form-group">
+                <label>💬 Izoh (ixtiyoriy)</label>
+                <textarea id="input-comment" placeholder="Qo'shimcha ma'lumot..."></textarea>
+            </div>
+            <div class="cart-summary">
+                <div class="summary-row">
+                    <span>Jami:</span>
+                    <strong id="checkout-total">0 so'm</strong>
+                </div>
+                <button class="btn-primary" onclick="submitOrder()">✓ Buyurtmani tasdiqlash</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mahsulot detali -->
+    <div class="modal" id="product-modal">
+        <div class="modal-content">
+            <button class="close-btn floating" onclick="closeProductModal()">✕</button>
+            <div id="product-detail"></div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Bizning SDK -->
+    <script src="/static/js/sdk.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
