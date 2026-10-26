@@ -1,0 +1,499 @@
+// Choy Plov - Admin panel (o'zbek tilida)
+DICT = { w_currency: "so'm" };
+const A = { page: 'dashboard', days: 14, metric: 'revenue', orders: { status: '', search: '', page: 1 }, users: { search: '', page: 1 }, cats: [], pending: 0 };
+const main = $('main');
+const STATUS_UZ = { pending: 'Kutilmoqda', completed: 'Tasdiqlandi', delivered: 'Yetkazib berildi', cancelled: 'Bekor qilindi' };
+const statusBadge = (s) => `<span class="status ${esc(s)}">${esc(STATUS_UZ[s] || s)}</span>`;
+
+// ============================================================ kirish
+(async function boot() {
+    try {
+        await api('/api/admin/session');
+        start();
+    } catch (e) {
+        showLogin(e.status === 403);
+    }
+})();
+
+function showLogin(forbidden) {
+    $('shell').classList.add('hidden');
+    const box = $('login');
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="login-card"><div class="badge-ic">${icon('shield', 'lg')}</div>
+        <h2>Admin panel</h2>
+        <p class="muted" style="margin-top:6px">${forbidden ? "Bu akkaunt admin emas. Parol bilan kiring." : "Kirish uchun parolni kiriting"}</p>
+        <div class="field"><input type="password" id="pw" class="input" style="width:100%" placeholder="Parol" autocomplete="current-password"></div>
+        <button class="btn primary block" id="pw-go">Kirish</button></div>`;
+    const go = async () => {
+        try {
+            const r = await api('/api/admin/login', { method: 'POST', body: { password: $('pw').value } });
+            store.sset('cp_admin_token', r.token);
+            box.classList.add('hidden');
+            start();
+        } catch (e) { toast("Parol noto'g'ri yoki ADMIN_PASSWORD sozlanmagan", 'err'); }
+    };
+    $('pw-go').onclick = go;
+    $('pw').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+}
+
+function start() {
+    $('shell').classList.remove('hidden');
+    if (store.sget('cp_admin_token')) {
+        $('logout').classList.remove('hidden');
+        $('logout').onclick = () => { try { sessionStorage.removeItem('cp_admin_token'); } catch (e) {} location.reload(); };
+    }
+    document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.page));
+    window.addEventListener('resize', debounce(() => { if (A.page === 'dashboard' && A.stats) drawCharts(); }, 150));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+    go('dashboard');
+    startIncoming();
+}
+function go(page) {
+    A.page = page;
+    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+    ({ dashboard: pageDashboard, orders: pageOrders, products: pageProducts, addons: pageAddons, users: pageUsers })[page]();
+}
+function debounce(fn, ms) { let t0; return (...a) => { clearTimeout(t0); t0 = setTimeout(() => fn(...a), ms); }; }
+const loading = () => { main.innerHTML = '<div class="skeleton" style="height:140px;margin-bottom:14px"></div><div class="skeleton" style="height:300px"></div>'; };
+function setPending(n) {
+    A.pending = n;
+    const d = $('pending-dot'); d.textContent = n; d.classList.toggle('hidden', !n);
+}
+
+// ============================================================ dashboard
+async function pageDashboard() {
+    loading();
+    try { A.stats = await api(`/api/admin/stats?days=${A.days}`); } catch (e) { return fail(e); }
+    const s = A.stats, tt = s.totals;
+    setPending(tt.pending);
+    main.innerHTML = `
+        <div class="page-head"><h1>Dashboard</h1>
+            <div class="seg range" id="range">${[7, 14, 30].map(d => `<button data-d="${d}" class="${d === A.days ? 'on' : ''}">${d} kun</button>`).join('')}</div></div>
+        <div class="kpis">
+            <div class="kpi"><span>${icon('orders')} Bugungi buyurtmalar</span><b>${fmt(tt.today_orders)}</b></div>
+            <div class="kpi"><span>${icon('chart')} Bugungi tushum</span><b>${fmt(tt.today_revenue)}</b><small>so'm</small></div>
+            <div class="kpi"><span>${icon('chart')} Jami tushum</span><b>${fmt(tt.revenue)}</b><small>so'm (bekor qilinganlarsiz)</small></div>
+            <div class="kpi"><span>${icon('users')} Foydalanuvchilar</span><b>${fmt(tt.users)}</b></div>
+            <div class="kpi"><span>${icon('clock')} Kutilayotgan</span><b>${fmt(tt.pending)}</b><small>${tt.orders} ta buyurtmadan</small></div>
+        </div>
+        <div class="panels">
+            <div class="panel"><h3><span>Kunlik dinamika</span>
+                <div class="seg small" id="metric"><button data-m="revenue" class="${A.metric === 'revenue' ? 'on' : ''}">Tushum</button><button data-m="orders" class="${A.metric === 'orders' ? 'on' : ''}">Buyurtmalar</button></div></h3>
+                <div class="chart" id="chart-daily"></div></div>
+            <div class="panel"><h3>Buyurtma holatlari</h3><div id="chart-status" class="donut-wrap"></div></div>
+            <div class="panel panel-full"><h3>Eng ko'p sotilgan mahsulotlar</h3><div id="chart-top"></div></div>
+        </div>`;
+    $('range').querySelectorAll('button').forEach(b => b.onclick = () => { A.days = +b.dataset.d; pageDashboard(); });
+    $('metric').querySelectorAll('button').forEach(b => b.onclick = () => { A.metric = b.dataset.m; $('metric').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); drawDaily(); });
+    drawCharts();
+}
+function drawCharts() { drawDaily(); drawStatus(); drawTop(); }
+
+function niceMax(v) {
+    if (v <= 0) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p;
+    return ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(s => n <= s)) * p;
+}
+function short(n) { return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(n % 1e3 ? 1 : 0) + 'k' : String(n); }
+
+function drawDaily() {
+    const el = $('chart-daily'); if (!el) return;
+    const data = A.stats.daily.map(d => ({ label: d.date.slice(5).replace('-', '.'), value: d[A.metric], date: d.date }));
+    const W = el.clientWidth || 560, H = 240, L = 46, R = 6, T = 10, B = 26;
+    const pw = W - L - R, ph = H - T - B, max = niceMax(Math.max(...data.map(d => d.value), 0));
+    const slot = pw / data.length, bw = Math.max(4, Math.min(34, slot * 0.62));
+    const step = Math.ceil(data.length / Math.max(2, Math.floor(pw / 56)));
+    let g = '';
+    for (let i = 0; i <= 4; i++) {
+        const y = T + ph - (ph * i) / 4;
+        g += `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text class="axis" x="${L - 8}" y="${y + 4}" text-anchor="end">${short(max * i / 4)}</text>`;
+    }
+    const bars = data.map((d, i) => {
+        const h = Math.max(d.value ? 3 : 0, (d.value / max) * ph), x = L + slot * i + (slot - bw) / 2, y = T + ph - h, r = Math.min(4, h, bw / 2);
+        const path = h ? `M${x},${y + h} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${y + h} Z` : '';
+        return `<path class="bar" data-i="${i}" d="${path}"/>` + (i % step === 0 ? `<text class="axis" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${d.label}</text>` : '')
+            + `<rect data-i="${i}" x="${L + slot * i}" y="${T}" width="${slot}" height="${ph}" fill="transparent"/>`;
+    }).join('');
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Kunlik ${A.metric === 'revenue' ? 'tushum' : 'buyurtmalar'}">${g}${bars}</svg><div class="chart-tip hidden" id="tip"></div>`;
+    const tip = $('tip');
+    el.querySelectorAll('rect[data-i]').forEach(r => {
+        r.onmouseenter = r.onmousemove = r.ontouchstart = () => {
+            const i = +r.dataset.i, d = data[i], x = L + slot * i + slot / 2;
+            el.querySelectorAll('.bar').forEach(b => b.classList.toggle('hot', +b.dataset.i === i));
+            tip.innerHTML = `${esc(d.date)}<b>${A.metric === 'revenue' ? fmt(d.value) + " so'm" : d.value + ' ta'}</b>`;
+            tip.style.left = Math.min(Math.max(x, 60), W - 60) + 'px'; tip.style.top = (T + ph - Math.max(3, (d.value / max) * ph)) + 'px';
+            tip.classList.remove('hidden');
+        };
+        r.onmouseleave = () => { tip.classList.add('hidden'); el.querySelectorAll('.bar').forEach(b => b.classList.remove('hot')); };
+    });
+}
+
+function drawStatus() {
+    const el = $('chart-status'); if (!el) return;
+    const st = A.stats.statuses, total = st.pending + st.completed + st.delivered + st.cancelled;
+    const rows = [['delivered', 'Yetkazib berildi', 'var(--accent)'], ['completed', 'Tasdiqlandi', 'var(--good)'], ['pending', 'Kutilmoqda', 'var(--warn)'], ['cancelled', 'Bekor qilindi', 'var(--bad)']];
+    const R = 62, C = 2 * Math.PI * R;
+    let off = 0, arcs = '';
+    if (total) rows.forEach(([k, , col]) => {
+        const len = (st[k] / total) * C; if (!len) return;
+        const gap = len > 4 ? 2 : 0;
+        arcs += `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${col}" stroke-width="18" stroke-dasharray="${len - gap} ${C - len + gap}" stroke-dashoffset="${-off}" transform="rotate(-90 80 80)"/>`;
+        off += len;
+    });
+    el.innerHTML = `<svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="Buyurtma holatlari">
+        <circle cx="80" cy="80" r="${R}" fill="none" stroke="var(--surface-2)" stroke-width="18"/>${arcs}
+        <text x="80" y="80" text-anchor="middle" fill="var(--text)" font-size="26" font-weight="700">${total}</text>
+        <text x="80" y="98" text-anchor="middle" fill="var(--muted)" font-size="11">buyurtma</text></svg>
+        <div class="legend">${rows.map(([k, n, col]) => `<div><i style="background:${col}"></i>${n}<b>${st[k]}</b></div>`).join('')}</div>`;
+}
+
+function drawTop() {
+    const el = $('chart-top'); if (!el) return;
+    const top = A.stats.top_products;
+    if (!top.length) { el.innerHTML = '<p class="muted">Hali ma\'lumot yo\'q</p>'; return; }
+    const max = Math.max(...top.map(p => p.qty));
+    el.innerHTML = top.map(p => `<div class="hbar"><span class="name" title="${esc(p.name)}">${esc(p.name)}</span>
+        <div class="track"><div class="fill" style="width:${(p.qty / max) * 100}%"></div></div><b>${p.qty} ta</b></div>`).join('');
+}
+
+function fail(e) { main.innerHTML = `<div class="empty">${icon('x', 'xl')}<p>Xatolik: ${esc(e.message)}</p></div>`; }
+
+// ============================================================ buyurtmalar
+async function pageOrders() {
+    const f = A.orders;
+    main.innerHTML = `<div class="page-head"><h1>Buyurtmalar</h1>
+        <div class="toolbar"><input class="input" id="o-search" placeholder="Qidirish: #id, telefon, ism..." value="${esc(f.search)}"></div></div>
+        <div class="chips" style="margin-bottom:14px">${['', 'pending', 'completed', 'delivered', 'cancelled'].map(s =>
+            `<button class="chip sm ${f.status === s ? 'active' : ''}" data-s="${s}">${s ? STATUS_UZ[s] : 'Hammasi'}</button>`).join('')}</div>
+        <div id="o-table"></div>`;
+    main.querySelectorAll('.chip').forEach(b => b.onclick = () => { f.status = b.dataset.s; f.page = 1; pageOrders(); });
+    $('o-search').oninput = debounce((e) => { f.search = e.target.value.trim(); f.page = 1; loadOrdersTable(); }, 300);
+    loadOrdersTable();
+}
+async function loadOrdersTable() {
+    const f = A.orders, box = $('o-table');
+    try {
+        const q = new URLSearchParams({ page: f.page });
+        if (f.status) q.set('status', f.status);
+        if (f.search) q.set('search', f.search);
+        const r = await api('/api/admin/orders?' + q);
+        A.orderRows = Object.fromEntries(r.items.map(o => [o.id, o]));
+        box.innerHTML = r.items.length ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Mijoz</th><th>Telefon</th><th>Manzil</th><th>Vaqt</th><th>Holat</th><th class="num">Summa</th></tr></thead><tbody>
+            ${r.items.map(o => `<tr class="click" data-id="${o.id}"><td><b>#${o.id}</b></td><td>${esc(o.first_name || '—')}${o.username ? `<div class="muted">@${esc(o.username)}</div>` : ''}</td>
+            <td>${esc(o.phone_number)}</td><td style="max-width:240px">${esc(o.address)}</td><td class="muted">${esc(fmtDate(o.created_at))}</td><td>${statusBadge(o.status)}</td><td class="num"><b>${fmt(o.total_price)}</b></td></tr>`).join('')}</tbody></table></div>
+            ${pager(r, f, loadOrdersTable)}` : `<div class="empty">${icon('orders', 'xl')}<p>Buyurtmalar topilmadi</p></div>`;
+        box.querySelectorAll('tr.click').forEach(tr => tr.onclick = () => openOrder(A.orderRows[tr.dataset.id]));
+        bindPager(box, f, loadOrdersTable);
+    } catch (e) { fail(e); }
+}
+function pager(r, f) {
+    const pages = Math.max(1, Math.ceil(r.total / r.per_page));
+    return `<div class="pager"><span>Jami: ${r.total}</span><div class="toolbar"><button class="btn sm" data-p="-1" ${f.page <= 1 ? 'disabled' : ''}>${icon('back')}</button><span>${f.page} / ${pages}</span><button class="btn sm" data-p="1" ${f.page >= pages ? 'disabled' : ''}>${icon('chevron')}</button></div></div>`;
+}
+function bindPager(box, f, reload) { box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { f.page += +b.dataset.p; reload(); }); }
+
+function openOrder(o) {
+    const sh = openSheet(`<h2>Buyurtma #${o.id} ${statusBadge(o.status)}</h2>
+        <div class="meta">${icon('user')} ${esc(o.first_name || '—')} ${o.username ? '@' + esc(o.username) : ''}</div>
+        <div class="meta">${icon('phone')} ${esc(o.phone_number)}</div>
+        <div class="meta">${icon('location')} ${esc(o.address)}</div>
+        <div class="meta">${icon('clock')} ${esc(fmtDate(o.created_at))}</div>
+        ${o.comment ? `<div class="meta">${icon('bell')} ${esc(o.comment)}</div>` : ''}
+        <div class="order-items" style="margin-top:14px">${o.items.map(i => `<div><span>${esc(i.product_name)} × ${i.quantity}${i.addons.length ? `<small>+ ${i.addons.map(a => esc(`${a.name} ${a.unit || ''} ×${a.qty}`)).join(', ')}</small>` : ''}</span><b>${fmt(i.price)}</b></div>`).join('')}</div>
+        <div class="total-row"><span>Jami</span><b>${fmt(o.total_price)} so'm</b></div>
+        <div class="toolbar" style="margin-top:18px">
+            ${o.status === 'pending' ? `<button class="btn primary" data-st="completed">${icon('check')} Tasdiqlash</button>` : ''}
+            ${o.status === 'completed' ? `<button class="btn primary" data-st="delivered">${icon('check')} Yetkazib berildi</button>` : ''}
+            ${o.status === 'pending' || o.status === 'completed' ? `<button class="btn danger" data-st="cancelled">${icon('x')} Bekor qilish</button>` : ''}
+            ${o.status === 'cancelled' ? `<button class="btn" data-st="pending">${icon('clock')} Kutilmoqda</button>` : ''}</div>
+        <p class="muted" style="margin-top:10px;font-size:12.5px">Tasdiqlash/bekor qilishda mijozga Telegram orqali xabar yuboriladi.</p>`);
+    sh.querySelectorAll('[data-st]').forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try { await api(`/api/admin/orders/${o.id}/status`, { method: 'POST', body: { status: b.dataset.st } }); closeSheet(); toast('Holat yangilandi'); loadOrdersTable(); refreshPending(); }
+        catch (e) { b.disabled = false; toast('Xatolik', 'err'); }
+    });
+}
+async function refreshPending() { try { setPending((await api('/api/admin/stats?days=1')).totals.pending); } catch (e) {} }
+
+// ============================================================ mahsulotlar
+async function pageProducts() {
+    loading();
+    try {
+        const [cats, prods] = await Promise.all([api('/api/admin/categories'), api('/api/admin/products')]);
+        A.cats = cats; A.prods = Object.fromEntries(prods.map(p => [p.id, p]));
+        main.innerHTML = `<div class="page-head"><h1>Mahsulotlar</h1>
+            <div class="toolbar"><button class="btn primary" id="new-prod">${icon('plus')} Mahsulot qo'shish</button></div></div>
+            <div class="panel" style="margin-bottom:8px"><h3>Kategoriyalar</h3>
+                ${cats.map(c => `<div class="cat-row">${icon(categoryIcon(c.name))}<span>${esc(c.name)}</span><small>${c.products_count} ta</small>
+                    <button class="icon-btn" style="width:34px;height:34px" data-ren="${c.id}" title="Nomini o'zgartirish">${icon('edit')}</button>
+                    <button class="icon-btn" style="width:34px;height:34px" data-delcat="${c.id}" title="O'chirish">${icon('trash')}</button></div>`).join('') || '<p class="muted">Kategoriya yo\'q</p>'}
+                <div class="toolbar" style="margin-top:10px"><input class="input" id="new-cat" placeholder="Yangi kategoriya nomi" maxlength="60"><button class="btn" id="add-cat">${icon('plus')} Qo'shish</button></div></div>
+            ${cats.map(c => {
+                const list = prods.filter(p => p.category_id === c.id);
+                return `<div class="cat-group">${icon(categoryIcon(c.name))} ${esc(c.name)}</div>` + (list.length ? `<div class="table-wrap"><table class="fixed"><colgroup><col style="width:68px"><col><col style="width:100px"><col style="width:84px"><col style="width:84px"><col style="width:104px"></colgroup><thead><tr><th></th><th>Nomi</th><th class="num">Narx</th><th>Rasmlar</th><th>Mavjud</th><th></th></tr></thead><tbody>
+                    ${list.map(p => `<tr><td><div class="thumb-sm">${p.images[0] ? `<img src="${esc(p.images[0].url)}" alt="">` : icon('plov')}</div></td>
+                    <td><b>${esc(p.name)}</b>${p.description ? `<div class="muted" style="max-width:300px">${esc(p.description.slice(0, 70))}</div>` : ''}</td>
+                    <td class="num">${fmt(p.price)}</td><td>${p.images.length}/5</td>
+                    <td><button class="switch ${p.is_available ? 'on' : ''}" data-tog="${p.id}" aria-label="Mavjudligi"></button></td>
+                    <td class="num"><button class="icon-btn" style="width:34px;height:34px;display:inline-grid" data-edit="${p.id}">${icon('edit')}</button>
+                        <button class="icon-btn" style="width:34px;height:34px;display:inline-grid" data-delp="${p.id}">${icon('trash')}</button></td></tr>`).join('')}</tbody></table></div>`
+                    : '<p class="muted">Mahsulot yo\'q</p>');
+            }).join('')}`;
+        $('new-prod').onclick = () => openProductForm();
+        $('add-cat').onclick = async () => { const n = $('new-cat').value.trim(); if (!n) return; await api('/api/admin/categories', { method: 'POST', body: { name: n } }); pageProducts(); };
+        main.querySelectorAll('[data-ren]').forEach(b => b.onclick = async () => {
+            const c = A.cats.find(x => x.id === +b.dataset.ren), n = prompt('Yangi nom:', c.name);
+            if (n && n.trim()) { await api(`/api/admin/categories/${c.id}`, { method: 'PUT', body: { name: n.trim() } }); pageProducts(); }
+        });
+        main.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
+            if (confirm("Kategoriya va undagi barcha mahsulotlar o'chirilsinmi?")) { await api(`/api/admin/categories/${b.dataset.delcat}`, { method: 'DELETE' }); pageProducts(); }
+        });
+        main.querySelectorAll('[data-tog]').forEach(b => b.onclick = async () => { const r = await api(`/api/admin/products/${b.dataset.tog}/toggle`, { method: 'POST' }); b.classList.toggle('on', r.is_available); });
+        main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openProductForm(A.prods[b.dataset.edit]));
+        main.querySelectorAll('[data-delp]').forEach(b => b.onclick = async () => {
+            if (confirm("Mahsulot o'chirilsinmi?")) { await api(`/api/admin/products/${b.dataset.delp}`, { method: 'DELETE' }); pageProducts(); }
+        });
+    } catch (e) { fail(e); }
+}
+
+function openProductForm(p) {
+    if (!A.cats.length) { toast("Avval kategoriya qo'shing", 'err'); return; }
+    const pending = [];          // yangi tanlangan fayllar
+    let images = p ? [...p.images] : [];
+    const sh = openSheet(`<h2>${p ? 'Mahsulotni tahrirlash' : "Yangi mahsulot"}</h2>
+        <div class="form-grid">
+            <div class="full"><span class="label">Kategoriya</span><div class="field"><select id="p-cat">${A.cats.map(c => `<option value="${c.id}" ${p && p.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div></div>
+            <div><span class="label">Nomi</span><div class="field"><input id="p-name" maxlength="120" value="${esc(p ? p.name : '')}"></div></div>
+            <div><span class="label">Narx (so'm)</span><div class="field"><input id="p-price" type="number" min="1" step="500" value="${p ? p.price : ''}"></div></div>
+            <div class="full"><span class="label">Tavsif</span><div class="field"><textarea id="p-desc" rows="3" maxlength="1000">${esc(p && p.description ? p.description : '')}</textarea></div></div>
+            <div class="full"><span class="label">Galereya (3-5 ta rasm tavsiya etiladi · JPG/PNG/WEBP · 5MB gacha)</span><div class="img-grid" id="p-imgs"></div>
+                <input type="file" id="p-file" accept="image/jpeg,image/png,image/webp" multiple class="hidden"></div>
+        </div>
+        <button class="btn primary block" id="p-save">${icon('check')} Saqlash</button>`);
+    sh.classList.add('wide');
+
+    const drawImgs = () => {
+        const room = 5 - images.length - pending.length;
+        $('p-imgs').innerHTML = images.map(i => `<div class="img-item"><img src="${esc(i.url)}" alt=""><button data-rm="${i.id}" aria-label="O'chirish">${icon('x')}</button></div>`).join('')
+            + pending.map((f, k) => `<div class="img-item new"><img src="${URL.createObjectURL(f)}" alt=""><button data-pn="${k}" aria-label="Olib tashlash">${icon('x')}</button></div>`).join('')
+            + (room > 0 ? `<div class="drop" id="p-drop">${icon('plus', 'lg')}<span>Rasm</span></div>` : '');
+        $('p-imgs').querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+            try { await api(`/api/admin/images/${b.dataset.rm}`, { method: 'DELETE' }); images = images.filter(i => i.id !== +b.dataset.rm); drawImgs(); } catch (e) { toast('Xatolik', 'err'); }
+        });
+        $('p-imgs').querySelectorAll('[data-pn]').forEach(b => b.onclick = () => { pending.splice(+b.dataset.pn, 1); drawImgs(); });
+        const drop = $('p-drop'); if (drop) drop.onclick = () => $('p-file').click();
+    };
+    $('p-file').onchange = (e) => {
+        [...e.target.files].forEach(f => { if (images.length + pending.length < 5) pending.push(f); });
+        e.target.value = ''; drawImgs();
+    };
+    drawImgs();
+
+    $('p-save').onclick = async () => {
+        const body = { category_id: +$('p-cat').value, name: $('p-name').value.trim(), price: parseFloat($('p-price').value), description: $('p-desc').value.trim() || null };
+        if (!body.name || !(body.price > 0)) { toast('Nom va narxni kiriting', 'err'); return; }
+        $('p-save').disabled = true;
+        try {
+            const id = p ? p.id : (await api('/api/admin/products', { method: 'POST', body })).id;
+            if (p) await api(`/api/admin/products/${p.id}`, { method: 'PUT', body });
+            for (const f of pending) {
+                const fd = new FormData(); fd.append('file', f);
+                try { await api(`/api/admin/products/${id}/images`, { method: 'POST', formData: fd }); }
+                catch (e) { toast(`${f.name}: ${e.message}`, 'err'); }
+            }
+            closeSheet(); toast('Saqlandi'); pageProducts();
+        } catch (e) { $('p-save').disabled = false; toast('Xatolik: ' + e.message, 'err'); }
+    };
+}
+
+// ============================================================ foydalanuvchilar
+async function pageUsers() {
+    const f = A.users;
+    main.innerHTML = `<div class="page-head"><h1>Foydalanuvchilar</h1>
+        <div class="toolbar"><input class="input" id="u-search" placeholder="Qidirish: ism, telefon, @username" value="${esc(f.search)}"></div></div><div id="u-table"></div>`;
+    $('u-search').oninput = debounce((e) => { f.search = e.target.value.trim(); f.page = 1; loadUsers(); }, 300);
+    loadUsers();
+}
+async function loadUsers() {
+    const f = A.users, box = $('u-table');
+    try {
+        const r = await api(`/api/admin/users?page=${f.page}&search=${encodeURIComponent(f.search)}`);
+        box.innerHTML = r.items.length ? `<div class="table-wrap"><table><thead><tr><th>Foydalanuvchi</th><th>Telefon</th><th>Til</th><th class="num">Buyurtmalar</th><th class="num">Sarflagan (so'm)</th><th>Ro'yxatdan o'tgan</th></tr></thead><tbody>
+            ${r.items.map(u => `<tr><td><b>${esc(u.first_name || '—')}</b><div class="muted">${u.username ? '@' + esc(u.username) : 'ID ' + u.user_id}</div></td><td>${esc(u.phone_number || '—')}</td>
+            <td>${esc((u.language || 'uz').toUpperCase())}</td><td class="num">${u.orders_count}</td><td class="num">${fmt(u.spent)}</td><td class="muted">${esc(fmtDate(u.created_at))}</td></tr>`).join('')}</tbody></table></div>${pager(r, f)}`
+            : `<div class="empty">${icon('users', 'xl')}<p>Foydalanuvchilar topilmadi</p></div>`;
+        bindPager(box, f, loadUsers);
+    } catch (e) { fail(e); }
+}
+
+// ============================================================ qo'shimchalar (go'sht, bedana tuxumi, qazi...)
+async function pageAddons() {
+    loading();
+    try {
+        const list = await api('/api/admin/addons');
+        A.addons = Object.fromEntries(list.map(x => [x.id, x]));
+        main.innerHTML = `<div class="page-head"><h1>Qo'shimchalar</h1>
+            <div class="toolbar"><button class="btn primary" id="new-addon">${icon('plus')} Qo'shimcha qo'shish</button></div></div>
+            <p class="muted" style="margin-bottom:14px">Mijoz mahsulotga har bir qo'shimchadan istalgancha porsiya qo'sha oladi. Narx — bitta porsiya uchun.</p>
+            ${list.length ? `<div class="table-wrap"><table><thead><tr><th>Nomi</th><th>Porsiya</th><th class="num">Narx (so'm)</th><th>Mavjud</th><th></th></tr></thead><tbody>
+                ${list.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.unit || '—')}</td><td class="num">${fmt(x.price)}</td>
+                <td><button class="switch ${x.is_available ? 'on' : ''}" data-atog="${x.id}" aria-label="Mavjudligi"></button></td>
+                <td class="num"><button class="icon-btn" style="width:34px;height:34px;display:inline-grid" data-edit="${x.id}">${icon('edit')}</button>
+                <button class="icon-btn" style="width:34px;height:34px;display:inline-grid" data-del="${x.id}">${icon('trash')}</button></td></tr>`).join('')}</tbody></table></div>`
+                : `<div class="empty">${icon('plus', 'xl')}<p>Qo'shimchalar yo'q</p></div>`}`;
+        $('new-addon').onclick = () => openAddonForm();
+        main.querySelectorAll('[data-atog]').forEach(b => b.onclick = async () => { const r = await api(`/api/admin/addons/${b.dataset.atog}/toggle`, { method: 'POST' }); b.classList.toggle('on', r.is_available); });
+        main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAddonForm(A.addons[b.dataset.edit]));
+        main.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+            if (confirm("Qo'shimcha menyudan olib tashlansinmi? (eski buyurtmalar saqlanadi)")) { await api(`/api/admin/addons/${b.dataset.del}`, { method: 'DELETE' }); pageAddons(); }
+        });
+    } catch (e) { fail(e); }
+}
+function openAddonForm(x) {
+    openSheet(`<h2>${x ? "Qo'shimchani tahrirlash" : "Yangi qo'shimcha"}</h2>
+        <div class="field"><span class="label">Nomi (masalan: Go'sht)</span><input id="ad-name" maxlength="60" value="${esc(x ? x.name : '')}"></div>
+        <div class="form-grid"><div><span class="label">Porsiya (50 gr, 25 gr, 1 dona)</span><div class="field"><input id="ad-unit" maxlength="20" value="${esc(x && x.unit ? x.unit : '')}"></div></div>
+        <div><span class="label">Narx (so'm)</span><div class="field"><input id="ad-price" type="number" min="0" step="500" value="${x ? x.price : ''}"></div></div></div>
+        <button class="btn primary block" id="ad-save">${icon('check')} Saqlash</button>`);
+    $('ad-save').onclick = async () => {
+        const body = { name: $('ad-name').value.trim(), unit: $('ad-unit').value.trim() || null, price: parseFloat($('ad-price').value) };
+        if (!body.name || !(body.price >= 0)) { toast('Nom va narxni kiriting', 'err'); return; }
+        $('ad-save').disabled = true;
+        try { await api(x ? `/api/admin/addons/${x.id}` : '/api/admin/addons', { method: x ? 'PUT' : 'POST', body }); closeSheet(); toast('Saqlandi'); pageAddons(); }
+        catch (e) { $('ad-save').disabled = false; toast('Xatolik: ' + e.message, 'err'); }
+    };
+}
+
+// ============================================================ kiruvchi buyurtma ekrani (telefon qo'ng'irog'iga o'xshash)
+// Yangi buyurtma kelganda butun ekranda chiqadi: o'ngga surish = qabul qilish, chapga = rad etish.
+const INC = { queue: [], showing: null, timer: null, audio: null, ringTimer: null };
+const seenIds = () => { try { return new Set(JSON.parse(store.sget('cp_seen') || '[]')); } catch (e) { return new Set(); } };
+function markSeen(id) { const s = seenIds(); s.add(id); store.sset('cp_seen', JSON.stringify([...s].slice(-200))); }
+
+function fmtPhone(p) {
+    const d = String(p || '').replace(/\D/g, '');
+    if (d.length === 12 && d.startsWith('998')) return `+998 ${d.slice(3, 5)} ${d.slice(5, 8)} ${d.slice(8, 10)} ${d.slice(10)}`;
+    return p || '';
+}
+
+function startIncoming() {
+    pollIncoming();
+    INC.timer = setInterval(() => { if (!document.hidden) pollIncoming(); }, 8000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollIncoming(); });
+}
+async function pollIncoming() {
+    try {
+        const r = await api('/api/admin/orders?status=pending&page=1');
+        setPending(r.total);
+        const seen = seenIds();
+        r.items.slice().reverse().forEach(o => {      // eskisidan yangisiga
+            if (!seen.has(o.id) && !INC.queue.some(q => q.id === o.id) && !(INC.showing && INC.showing.id === o.id)) INC.queue.push(o);
+        });
+        if (!INC.showing) nextCall();
+    } catch (e) {}
+}
+
+function ring(on) {
+    clearInterval(INC.ringTimer);
+    if (!on) return;
+    const beep = () => {
+        try {
+            INC.audio = INC.audio || new (window.AudioContext || window.webkitAudioContext)();
+            const ctx = INC.audio, t0 = ctx.currentTime;
+            [[880, 0], [660, 0.22]].forEach(([f, d]) => {
+                const o = ctx.createOscillator(), g = ctx.createGain();
+                o.frequency.value = f; o.connect(g); g.connect(ctx.destination);
+                g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.18, t0 + d + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.2);
+                o.start(t0 + d); o.stop(t0 + d + 0.22);
+            });
+        } catch (e) {}
+        try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch (e) {}
+    };
+    beep(); INC.ringTimer = setInterval(beep, 2200);
+}
+
+function nextCall() {
+    const o = INC.queue.shift();
+    if (!o) { INC.showing = null; return; }
+    INC.showing = o;
+    showCall(o, INC.queue.length);
+}
+
+function closeCall() {
+    ring(false);
+    const el = $('call'); if (el) el.remove();
+    document.removeEventListener('keydown', callKeys);
+    document.body.style.overflow = '';
+    INC.showing = null;
+}
+function callKeys(e) { if (e.key === 'ArrowRight') decide('completed'); else if (e.key === 'ArrowLeft') decide('cancelled'); else if (e.key === 'Escape') later(); }
+
+async function decide(status) {
+    const o = INC.showing; if (!o) return;
+    const el = $('call'); if (el) el.classList.add(status === 'completed' ? 'out-ok' : 'out-no');
+    markSeen(o.id);
+    try {
+        await api(`/api/admin/orders/${o.id}/status`, { method: 'POST', body: { status } });
+        toast(status === 'completed' ? `#${o.id} qabul qilindi` : `#${o.id} rad etildi`);
+        if (A.page === 'orders') loadOrdersTable();
+        refreshPending();
+    } catch (e) { toast('Xatolik', 'err'); }
+    setTimeout(() => { closeCall(); nextCall(); }, 260);
+}
+function later(openDetails) {
+    const o = INC.showing; if (!o) return;
+    markSeen(o.id); closeCall();
+    if (openDetails) openOrder(o);
+    nextCall();
+}
+
+function showCall(o, more) {
+    const items = o.items.map(i => `${esc(i.product_name)} × ${i.quantity}`).join(' · ');
+    const div = document.createElement('div');
+    div.id = 'call'; div.className = 'call'; div.setAttribute('role', 'alertdialog'); div.setAttribute('aria-label', 'Yangi buyurtma');
+    div.innerHTML = `
+        <div class="call-top"><span class="call-chip">${icon('bell')} Yangi buyurtma #${o.id}${more ? ` · yana ${more} ta` : ''}</span></div>
+        <div class="call-main">
+            <div class="call-avatar"><i></i><i></i><span>${icon('user', 'xl')}</span></div>
+            <div class="call-phone">${esc(fmtPhone(o.phone_number))}</div>
+            <div class="call-sub">${esc(o.first_name || '—')}${o.username ? ' · @' + esc(o.username) : ''}</div>
+            <div class="call-total">${fmt(o.total_price)} so'm</div>
+            <div class="call-info">${icon('location')}<span>${esc(o.address)}</span></div>
+            <div class="call-info muted">${icon('orders')}<span>${items}</span></div>
+        </div>
+        <div class="call-bottom">
+            <button class="call-msg" id="call-more">${icon('orders')} Tafsilotlar</button>
+            <div class="swipe" id="swipe" aria-label="O'ngga surish: qabul qilish. Chapga surish: rad etish">
+                <span class="sw-l">Rad etish</span><span class="sw-r">Qabul qilish</span>
+                <div class="sw-handle" id="sw-handle">${icon('phone', 'lg')}</div>
+            </div>
+        </div>`;
+    document.body.appendChild(div);
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', callKeys);
+    $('call-more').onclick = () => later(true);
+    bindSwipe();
+    ring(true);
+}
+
+function bindSwipe() {
+    const track = $('swipe'), h = $('sw-handle');
+    let startX = 0, dx = 0, drag = false, max = 0;
+    const apply = () => {
+        h.style.transform = `translateX(${dx}px) rotate(${dx < 0 ? 135 * Math.min(1, -dx / max) : 0}deg)`;
+        track.style.setProperty('--p', (dx / max).toFixed(3));
+        track.classList.toggle('to-ok', dx > 8); track.classList.toggle('to-no', dx < -8);
+    };
+    h.onpointerdown = (e) => {
+        drag = true; startX = e.clientX; h.setPointerCapture(e.pointerId); h.classList.add('grab');
+        max = (track.clientWidth - h.offsetWidth) / 2 - 6;
+    };
+    h.onpointermove = (e) => { if (!drag) return; dx = Math.max(-max, Math.min(max, e.clientX - startX)); apply(); };
+    const end = () => {
+        if (!drag) return; drag = false; h.classList.remove('grab');
+        if (dx > max * 0.8) { dx = max; apply(); decide('completed'); }
+        else if (dx < -max * 0.8) { dx = -max; apply(); decide('cancelled'); }
+        else { dx = 0; apply(); }
+    };
+    h.onpointerup = end; h.onpointercancel = end;
+}
