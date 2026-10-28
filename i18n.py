@@ -125,6 +125,7 @@ S = {
     'w_comment': ("Izoh (ixtiyoriy)", "Комментарий (необязательно)", "Comment (optional)"),
     'w_saved_addresses': ("Saqlangan manzillar", "Сохранённые адреса", "Saved addresses"),
     'w_new_address': ("Yangi manzil", "Новый адрес", "New address"),
+    'w_other_address': ("Boshqa manzil", "Другой адрес", "Other address"),
     'w_save_address': ("Manzilni saqlash", "Сохранить адрес", "Save address"),
     'w_order_done': ("Buyurtma qabul qilindi!", "Заказ принят!", "Order received!"),
     'w_order_number': ("Buyurtma raqami", "Номер заказа", "Order number"),
