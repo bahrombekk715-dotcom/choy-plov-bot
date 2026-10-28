@@ -266,11 +266,11 @@ async function openCheckout() {
         <div class="field ${saved ? 'hidden' : ''}" id="ph-field"><label class="label" for="f-phone">${esc(t('w_phone'))}</label><input id="f-phone" type="tel" inputmode="tel" placeholder="+998 90 123 45 67">
             ${saved ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="f-savephone"> ${esc(t('w_save_phone'))}</label>` : ''}</div>
         <span class="label">${esc(t('w_address'))}</span>
-        ${addrs.length ? `<div class="addr-chips" id="addr-chips">${addrs.map(a => `<button class="chip sm ${def && def.id === a.id ? 'active' : ''}" data-aid="${a.id}">${icon('location')}${esc(a.title)}</button>`).join('')}</div>` : ''}
+        ${addrs.length ? `<div class="addr-chips" id="addr-chips">${addrs.map(a => `<button class="chip sm ${def && def.id === a.id ? 'active' : ''}" data-aid="${a.id}">${icon('location')}${esc(a.title)}</button>`).join('')}<button class="chip sm" data-aid="other">${esc(t('w_other_address'))}</button></div>` : ''}
         <div class="field"><textarea id="f-addr" rows="2" placeholder="${esc(t('w_address_ph'))}" aria-label="${esc(t('w_address'))}">${esc(def ? def.address : '')}</textarea></div>
         <div class="addr-chips" style="margin:-2px 0 12px"><button class="chip sm" id="f-loc">${icon('location')}<span id="f-loc-t">${esc(t('w_locate'))}</span></button></div>
-        <label class="check" style="margin:-4px 0 14px"><input type="checkbox" id="f-save"> ${esc(t('w_save_address'))}</label>
-        <div class="field hidden" id="f-title-wrap"><input id="f-title" maxlength="40" placeholder="${esc(t('w_address_title'))}" aria-label="${esc(t('w_address_title'))}"></div>
+        <div id="f-save-wrap"><label class="check" style="margin:-4px 0 14px"><input type="checkbox" id="f-save"> ${esc(t('w_save_address'))}</label>
+        <div class="field hidden" id="f-title-wrap"><input id="f-title" maxlength="40" placeholder="${esc(t('w_address_title'))}" aria-label="${esc(t('w_address_title'))}"></div></div>
         <div class="field"><label class="label" for="f-comment">${esc(t('w_comment'))}</label><textarea id="f-comment" rows="2" maxlength="500"></textarea></div>
         <div class="total-row"><span>${esc(t('w_total'))}</span><b>${esc(money(cartTotal()))}</b></div>
         <button class="btn primary block" id="place" style="margin-top:16px">${esc(t('w_place_order'))}</button>`);
@@ -286,14 +286,20 @@ async function openCheckout() {
         locFromSaved = !!loc;
         paintLoc();
     };
+    let otherAddr = false;   // "Boshqa manzil" tanlansa, manzil faqat shu buyurtma uchun — saqlanmaydi
     sh.querySelectorAll('[data-aid]').forEach(b => b.onclick = () => {
         sh.querySelectorAll('[data-aid]').forEach(x => x.classList.toggle('active', x === b));
-        useAddr(addrs.find(a => a.id === +b.dataset.aid));
+        otherAddr = b.dataset.aid === 'other';
+        $('f-save-wrap').classList.toggle('hidden', otherAddr);
+        if (otherAddr) {
+            $('f-save').checked = false; $('f-title-wrap').classList.add('hidden');
+            $('f-addr').value = ''; loc = null; locFromSaved = false; paintLoc(); $('f-addr').focus();
+        } else useAddr(addrs.find(a => a.id === +b.dataset.aid));
     });
     if (def && def.lat != null && def.lon != null) { loc = { lat: def.lat, lon: def.lon }; locFromSaved = true; paintLoc(); }
     // mijoz manzilni qo'lda o'zgartirsa, eski saqlangan manzilning koordinatasi buyurtmaga ketmasligi kerak
     $('f-addr').addEventListener('input', () => {
-        sh.querySelectorAll('[data-aid]').forEach(x => x.classList.remove('active'));
+        if (!otherAddr) sh.querySelectorAll('[data-aid]').forEach(x => x.classList.remove('active'));
         if (locFromSaved) { loc = null; locFromSaved = false; paintLoc(); }
     });
     $('f-loc').onclick = async () => {
@@ -320,7 +326,7 @@ async function openCheckout() {
             const r = await api('/api/order', { method: 'POST', body: {
                 phone, address, lat: loc ? loc.lat : null, lon: loc ? loc.lon : null, comment: $('f-comment').value.trim() || null,
                 cart: S.cart.map(i => ({ product_id: i.pid, quantity: i.qty, addons: i.addons.map(x => ({ id: x.id, qty: x.qty })) })) } });
-            if (address.length >= 3 && $('f-save').checked && !addrs.some(a => a.address === address)) {
+            if (!otherAddr && address.length >= 3 && $('f-save').checked && !addrs.some(a => a.address === address)) {
                 try { await api('/api/addresses', { method: 'POST', body: { title: $('f-title').value.trim() || t('w_new_address'), address, is_default: !addrs.length, lat: loc ? loc.lat : null, lon: loc ? loc.lon : null } }); } catch (e) {}
             }
             if (!saved) S.me.phone_number = phone;                                   // birinchi raqam avtomatik saqlandi
