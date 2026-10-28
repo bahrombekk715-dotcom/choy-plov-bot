@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import notify
-from config import ADMIN_ID, ADMIN_PASSWORD, BOT_TOKEN, DEV_MODE, UPLOAD_DIR
+from config import ADMIN_ID, ADMIN_PASSWORD, BOT_TOKEN, DEV_MODE, SUPPORT_PHONE, SUPPORT_USERNAME, UPLOAD_DIR
 from database import MAX_IMAGES, Database
 from i18n import LANGS, norm_lang, web_dict
 
@@ -190,7 +190,8 @@ async def me(request: Request):
     user = await ensure_user(tg_user)
     is_admin = bool(ADMIN_ID and tg_user['id'] == ADMIN_ID)
     return {'telegram': True, 'registered': True, 'is_admin': is_admin, **dict(user),
-            'stats': await db.get_user_stats(tg_user['id'])}
+            'stats': await db.get_user_stats(tg_user['id']),
+            'support': {'username': SUPPORT_USERNAME, 'phone': SUPPORT_PHONE}}
 
 
 class PhoneIn(BaseModel):
