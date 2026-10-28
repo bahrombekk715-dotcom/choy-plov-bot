@@ -51,7 +51,7 @@ function start() {
 function go(page) {
     A.page = page;
     document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-    ({ dashboard: pageDashboard, orders: pageOrders, products: pageProducts, addons: pageAddons, users: pageUsers })[page]();
+    ({ dashboard: pageDashboard, orders: pageOrders, products: pageProducts, addons: pageAddons, users: pageUsers, support: pageSupport })[page]();
 }
 function debounce(fn, ms) { let t0; return (...a) => { clearTimeout(t0); t0 = setTimeout(() => fn(...a), ms); }; }
 const loading = () => { main.innerHTML = '<div class="skeleton" style="height:140px;margin-bottom:14px"></div><div class="skeleton" style="height:300px"></div>'; };
@@ -415,7 +415,119 @@ function openAddonForm(x) {
 
 // ============================================================ yangi buyurtmalar soni (chap menyudagi belgi)
 function startIncoming() {
-    refreshPending();
-    setInterval(() => { if (!document.hidden) refreshPending(); }, 15000);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshPending(); });
+    refreshPending(); refreshSupUnread();
+    setInterval(() => { if (!document.hidden) { refreshPending(); if (A.page !== 'support') refreshSupUnread(); } }, 15000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshPending(); refreshSupUnread(); } });
 }
+
+// ============================================================ murojaatlar (mijozlar bilan chat)
+A.sup = { search: '', unread: 0, uid: null, lastId: 0, items: [] };
+let supPrev = null;
+function setSupDot(n) {
+    const d = $('sup-dot'); if (!d) return;
+    d.textContent = n; d.classList.toggle('hidden', !n);
+    if (supPrev !== null && n > supPrev) toast('Yangi murojaat keldi');
+    supPrev = n;
+}
+async function refreshSupUnread() { try { setSupDot((await api('/api/admin/support/unread')).count); } catch (e) {} }
+
+function pageSupport() {
+    const f = A.sup;
+    f.uid = null; f.lastId = 0;
+    main.innerHTML = `<div class="page-head"><h1>Murojaatlar</h1>
+        <div class="toolbar"><input class="input" id="sa-search" placeholder="Qidirish: ism, telefon, @username" value="${esc(f.search)}">
+            <label class="check" style="margin:0"><input type="checkbox" id="sa-unread" ${f.unread ? 'checked' : ''}> Faqat javobsizlar</label></div></div>
+        <div class="sup-admin" id="sa"><div class="sa-list" id="sa-list"></div>
+            <div class="sa-chat" id="sa-chat"><div class="empty">${icon('bell', 'xl')}<p>Chapdan mijozni tanlang</p></div></div></div>`;
+    $('sa-search').oninput = debounce((e) => { f.search = e.target.value.trim(); loadThreads(); }, 300);
+    $('sa-unread').onchange = (e) => { f.unread = e.target.checked ? 1 : 0; loadThreads(); };
+    loadThreads();
+}
+async function loadThreads() {
+    const f = A.sup, box = $('sa-list');
+    if (!box) return;
+    try {
+        const r = await api(`/api/admin/support?search=${encodeURIComponent(f.search)}&unread=${f.unread}`);
+        setSupDot(r.unread_total);
+        f.items = r.items;
+        box.innerHTML = r.items.length ? r.items.map(u => `<button class="sa-item ${u.user_id === f.uid ? 'on' : ''}" data-uid="${u.user_id}">
+            <span class="avatar sm"><span>${esc((u.first_name || '?').trim().charAt(0).toUpperCase())}</span></span>
+            <span class="sa-txt"><b>${esc(u.first_name || '—')}</b><small>${u.username ? '@' + esc(u.username) : esc(u.phone_number || 'ID ' + u.user_id)}</small>
+                <em>${u.last_sender === 'admin' ? 'Siz: ' : ''}${esc(u.last_body)}</em></span>
+            <span class="sa-meta"><small>${esc(fmtDate(u.last_at))}</small>${u.unread ? `<i class="badge-dot">${u.unread}</i>` : ''}</span></button>`).join('')
+            : `<div class="empty" style="padding:30px 10px"><p>Murojaatlar yo'q</p></div>`;
+        box.querySelectorAll('.sa-item').forEach(b => b.onclick = () => openThread(+b.dataset.uid));
+    } catch (e) { /* keyingi so'rovda yangilanadi */ }
+}
+
+async function openThread(uid) {
+    const f = A.sup, chat = $('sa-chat');
+    f.uid = uid; f.lastId = 0;
+    $('sa').classList.add('chat-open');
+    document.querySelectorAll('.sa-item').forEach(b => b.classList.toggle('on', +b.dataset.uid === uid));
+    chat.innerHTML = '<div class="skeleton" style="height:100%;min-height:300px"></div>';
+    let r;
+    try { r = await api(`/api/admin/support/${uid}`); } catch (e) { chat.innerHTML = `<div class="empty"><p>Xatolik: ${esc(e.message)}</p></div>`; return; }
+    const u = r.user, st = u.stats || {};
+    const info = (k, v) => `<div><span>${k}</span><b>${v}</b></div>`;
+    const tel = (u.phone_number || '').replace(/[^\d+]/g, '');
+    chat.innerHTML = `<div class="sa-head"><button class="icon-btn sa-back" id="sa-back" aria-label="Orqaga">${icon('back')}</button>
+            <span class="avatar sm"><span>${esc((u.first_name || '?').trim().charAt(0).toUpperCase())}</span></span>
+            <div><b>${esc(u.first_name || '—')}</b><div class="muted">${u.username ? `<a href="https://t.me/${esc(u.username)}" target="_blank" rel="noopener">@${esc(u.username)}</a>` : 'ID ' + u.user_id}</div></div></div>
+        <details class="sa-info" ${window.innerWidth > 900 ? 'open' : ''}><summary>Mijoz ma'lumotlari</summary>
+            <div class="sa-grid">
+                ${info('Telefon', tel ? `<a href="tel:${esc(tel)}">${esc(u.phone_number)}</a>` : '—')}
+                ${info('Telegram ID', esc(u.user_id))}
+                ${info('Til', esc((u.language || 'uz').toUpperCase()))}
+                ${info("Ro'yxatdan o'tgan", esc(fmtDate(u.created_at)))}
+                ${info('Buyurtmalar', fmt(st.orders) + ' ta (' + fmt(st.completed) + ' ta bajarilgan)')}
+                ${info("Sarflagan", fmt(st.spent) + " so'm")}
+            </div>
+            ${u.addresses.length ? `<div class="sa-sub"><span>Saqlangan manzillar</span>${u.addresses.map(a => `<div>${icon('location')} <b>${esc(a.title)}</b>: ${esc(a.address)}</div>`).join('')}</div>` : ''}
+            ${u.orders.length ? `<div class="sa-sub"><span>Oxirgi buyurtmalar</span>${u.orders.map(o => `<div>#${o.id} ${statusBadge(o.status)} ${fmt(o.total_price)} so'm · ${esc(o.phone_number)} · <span class="muted">${esc(fmtDate(o.created_at))}</span></div>`).join('')}</div>` : ''}
+        </details>
+        <div class="sup-list" id="sa-msgs"></div>
+        <div class="sup-compose"><textarea id="sa-in" rows="1" maxlength="1000" placeholder="Javob yozing... (Enter — yuborish, Shift+Enter — yangi qator)"></textarea>
+            <button class="sup-send" id="sa-send" aria-label="Yuborish">${icon('chevron')}</button></div>`;
+    $('sa-back').onclick = () => { f.uid = null; $('sa').classList.remove('chat-open'); loadThreads(); };
+    const input = $('sa-in');
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 140) + 'px'; });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(); } });
+    $('sa-send').onclick = sendReply;
+    addThreadMessages(r.messages, true);
+    loadThreads();               // ochilgach "o'qilgan" bo'ladi — chap ro'yxat va belgi yangilanadi
+    if (window.innerWidth > 900) input.focus();
+}
+function addThreadMessages(msgs, first) {
+    const box = $('sa-msgs'), f = A.sup;
+    if (!box) return;
+    const fresh = msgs.filter(m => m.id > f.lastId);
+    if (!fresh.length) { if (first) box.innerHTML = '<div class="sup-empty"><p>Hali xabar yo\'q</p></div>'; return; }
+    const stick = first || box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    box.querySelectorAll('.sup-empty').forEach(x => x.remove());
+    box.insertAdjacentHTML('beforeend', fresh.map(m => `<div class="bub ${m.sender === 'admin' ? 'me' : 'them'}" data-id="${m.id}"><span>${esc(m.body)}</span><small>${esc(fmtDate(m.created_at))}</small></div>`).join(''));
+    f.lastId = fresh[fresh.length - 1].id;
+    if (stick) box.scrollTop = box.scrollHeight;
+}
+async function sendReply() {
+    const f = A.sup, input = $('sa-in');
+    const text = input.value.trim();
+    if (!text || !f.uid) return;
+    $('sa-send').disabled = true;
+    try {
+        const m = await api(`/api/admin/support/${f.uid}`, { method: 'POST', body: { text } });
+        input.value = ''; input.style.height = 'auto';
+        addThreadMessages([m]);
+        loadThreads();
+    } catch (e) { toast('Yuborilmadi: ' + e.message, 'err'); }
+    $('sa-send').disabled = false; input.focus();
+}
+// Ochiq suhbat va ro'yxat har 5 soniyada yangilanadi (faqat shu sahifada va oyna ko'rinib turganda)
+setInterval(async () => {
+    if (document.hidden || A.page !== 'support') return;
+    const f = A.sup;
+    loadThreads();
+    if (f.uid && $('sa-msgs')) {
+        try { addThreadMessages((await api(`/api/admin/support/${f.uid}?after=${f.lastId}`)).messages); } catch (e) {}
+    }
+}, 5000);

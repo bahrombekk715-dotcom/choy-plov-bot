@@ -312,3 +312,11 @@ Savollar yoki takliflar bo'lsa, GitHub Issues orqali murojaat qiling.
 **Made with ❤️ by Bahrom**
 
 🔗 GitHub: https://github.com/bahrombekk715-dotcom/choy-plov-bot
+
+
+## 💬 Qo'llab-quvvatlash (chat)
+
+- Mijoz: Profil → *Murojaat yozish*. Xabarlar bazadagi `support_messages` jadvaliga yoziladi.
+- Admin: `/admin` → *Murojaatlar*. Har bir mijozning telefoni, buyurtmalari, manzillari ko'rinadi, javob shu yerdan yoziladi.
+- Admin javob yozsa, mijozga Telegramdan ham xabar boradi. Mijoz yozsa, adminga Telegramda qisqa xabar keladi.
+- Telegramga xabar yuborish fonda bajariladi, shuning uchun sayt va bot sekinlashmaydi.

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import logging
@@ -25,6 +26,14 @@ from i18n import LANGS, norm_lang, web_dict
 logger = logging.getLogger(__name__)
 db = Database()
 telegram_bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+_bg_tasks = set()
+
+
+def bg(coro):
+    """Telegramga xabar yuborish kabi sekin ishlar so'rovni kutdirmaydi: javob darhol qaytadi, xabar fonda ketadi."""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -191,7 +200,8 @@ async def me(request: Request):
     is_admin = bool(ADMIN_ID and tg_user['id'] == ADMIN_ID)
     return {'telegram': True, 'registered': True, 'is_admin': is_admin, **dict(user),
             'stats': await db.get_user_stats(tg_user['id']),
-            'support': {'username': SUPPORT_USERNAME, 'phone': SUPPORT_PHONE}}
+            'support': {'username': SUPPORT_USERNAME, 'phone': SUPPORT_PHONE},
+            'support_unread': await db.support_user_unread(tg_user['id'])}
 
 
 class PhoneIn(BaseModel):
@@ -331,7 +341,7 @@ async def create_order(body: OrderIn, user=Depends(registered_user)):
     if not user['phone_number']:                                  # birinchi raqam profilga saqlanadi; boshqa raqam faqat shu buyurtma uchun
         await db.set_phone(user['user_id'], body.phone.strip())
     if telegram_bot:
-        await notify.notify_new_order(telegram_bot, db, order_id)
+        bg(notify.notify_new_order(telegram_bot, db, order_id))
     return {"success": True, "order_id": order_id, "total": total}
 
 
@@ -353,10 +363,40 @@ async def cancel_my_order(order_id: int, user=Depends(registered_user)):
     if not await db.cancel_user_order(order_id, user['user_id']):
         raise HTTPException(400, 'not_pending')
     if telegram_bot:
-        order = await db.get_order(order_id)
-        await notify.refresh_admin_message(telegram_bot, db, order)
-        await notify.notify_admin_text(telegram_bot, f"❌ Mijoz buyurtma #{order_id} ni bekor qildi.")
+        async def _after_cancel():
+            order = await db.get_order(order_id)
+            await notify.refresh_admin_message(telegram_bot, db, order)
+            await notify.notify_admin_text(telegram_bot, f"❌ Mijoz buyurtma #{order_id} ni bekor qildi.")
+        bg(_after_cancel())
     return {'ok': True}
+
+
+# ---- qo'llab-quvvatlash (mijoz <-> admin chat)
+class SupportIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+@app.get("/api/support")
+async def support_messages(after: int = 0, user=Depends(registered_user)):
+    return {'messages': await db.support_user_messages(user['user_id'], max(after, 0))}
+
+
+@app.get("/api/support/unread")
+async def support_unread(user=Depends(registered_user)):
+    return {'count': await db.support_user_unread(user['user_id'])}
+
+
+@app.post("/api/support")
+async def support_send(body: SupportIn, user=Depends(registered_user)):
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, 'empty')
+    if await db.support_recent_user_count(user['user_id']) >= 20:
+        raise HTTPException(429, 'too_many')
+    msg = await db.support_add(user['user_id'], 'user', text)
+    if telegram_bot:
+        bg(notify.notify_support_to_admin(telegram_bot, dict(user), text))
+    return msg
 
 
 # ================================================================ admin API
@@ -402,8 +442,11 @@ async def admin_edit_order_items(order_id: int, body: OrderItemsIn, _=Depends(ad
         raise HTTPException(400, str(e))
     if telegram_bot:
         order = await db.get_order(order_id)
-        await notify.send_to_user(telegram_bot, db, order['user_id'], 'n_edited', id=order_id, total=notify.fmt_money(total))
-        await notify.refresh_admin_message(telegram_bot, db, order)
+
+        async def _after_edit():
+            await notify.send_to_user(telegram_bot, db, order['user_id'], 'n_edited', id=order_id, total=notify.fmt_money(total))
+            await notify.refresh_admin_message(telegram_bot, db, order)
+        bg(_after_edit())
     return {'ok': True, 'total': total}
 
 
@@ -422,9 +465,48 @@ async def admin_set_status(order_id: int, body: StatusIn, _=Depends(admin_dep)):
     await db.update_order_status(order_id, body.status)
     if changed and telegram_bot:
         order = await db.get_order(order_id)
-        await notify.notify_status_change(telegram_bot, db, order)          # mijozga xabar
-        await notify.refresh_admin_message(telegram_bot, db, order)         # adminning bot chatidagi xabar ham yangilanadi
+        async def _after_status():
+            await notify.notify_status_change(telegram_bot, db, order)          # mijozga xabar
+            await notify.refresh_admin_message(telegram_bot, db, order)         # adminning bot chatidagi xabar ham yangilanadi
+        bg(_after_status())
     return {'ok': True}
+
+
+# ---- admin: qo'llab-quvvatlash
+@app.get("/api/admin/support/unread")
+async def admin_support_unread(_=Depends(admin_dep)):
+    return {'count': await db.support_admin_unread_total()}
+
+
+@app.get("/api/admin/support")
+async def admin_support_threads(page: int = 1, search: str = '', unread: int = 0, _=Depends(admin_dep)):
+    r = await db.support_threads(search.strip() or None, bool(unread), page)
+    return {**r, 'unread_total': await db.support_admin_unread_total()}
+
+
+@app.get("/api/admin/support/{user_id}")
+async def admin_support_thread(user_id: int, after: int = 0, _=Depends(admin_dep)):
+    messages = await db.support_thread(user_id, max(after, 0))
+    out = {'messages': messages}
+    if after <= 0:                      # mijoz kartochkasi faqat suhbat ochilganda kerak
+        card = await db.support_user_card(user_id)
+        if not card:
+            raise HTTPException(404, 'not_found')
+        out['user'] = card
+    return out
+
+
+@app.post("/api/admin/support/{user_id}")
+async def admin_support_reply(user_id: int, body: SupportIn, _=Depends(admin_dep)):
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, 'empty')
+    if not await db.get_user(user_id):
+        raise HTTPException(404, 'not_found')
+    msg = await db.support_add(user_id, 'admin', text)
+    if telegram_bot:
+        bg(notify.notify_support_reply(telegram_bot, db, user_id, text))
+    return msg
 
 
 @app.get("/api/admin/users")

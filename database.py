@@ -211,6 +211,18 @@ class Database:
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        CREATE TABLE IF NOT EXISTS support_messages (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            sender TEXT NOT NULL,
+            body TEXT NOT NULL,
+            read_by_admin BOOLEAN NOT NULL DEFAULT FALSE,
+            read_by_user BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id, id);
+        CREATE INDEX IF NOT EXISTS idx_support_unread_admin ON support_messages(user_id) WHERE sender = 'user' AND NOT read_by_admin;
+        CREATE INDEX IF NOT EXISTS idx_support_unread_user ON support_messages(user_id) WHERE sender = 'admin' AND NOT read_by_user;
         CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
         CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
@@ -678,6 +690,85 @@ class Database:
                 await self._exec(
                     'UPDATE addresses SET is_default = TRUE WHERE id = (SELECT MAX(id) FROM addresses WHERE user_id = ?)',
                     (user_id,), conn=c)
+
+    # ------------------------------------------------------------ qo'llab-quvvatlash (chat)
+    async def support_add(self, user_id, sender, body):
+        """Xabarni saqlaydi. Yuboruvchining o'z tomoni darhol 'o'qilgan' hisoblanadi."""
+        return await self._one(
+            '''INSERT INTO support_messages (user_id, sender, body, read_by_admin, read_by_user)
+               VALUES (?, ?, ?, ?, ?) RETURNING id, sender, body, created_at''',
+            (user_id, sender, body, sender == 'admin', sender == 'user'))
+
+    async def support_recent_user_count(self, user_id, seconds=600):
+        """Spamdan himoya: oxirgi daqiqalarda mijoz nechta xabar yuborgan."""
+        return await self._val(
+            "SELECT COUNT(*) FROM support_messages WHERE user_id = ? AND sender = 'user' "
+            f"AND created_at > now() - interval '{int(seconds)} seconds'", (user_id,))
+
+    async def support_user_messages(self, user_id, after=0):
+        """Mijoz uchun suhbat (oxirgi 200 ta). after berilsa — faqat yangilari. Ochilgach admin javoblari 'o'qilgan' bo'ladi."""
+        rows = await self._all(
+            '''SELECT * FROM (SELECT id, sender, body, created_at FROM support_messages
+               WHERE user_id = ? AND id > ? ORDER BY id DESC LIMIT 200) t ORDER BY id''', (user_id, after))
+        if any(r['sender'] == 'admin' for r in rows):
+            await self._exec("UPDATE support_messages SET read_by_user = TRUE "
+                             "WHERE user_id = ? AND sender = 'admin' AND NOT read_by_user", (user_id,))
+        return rows
+
+    async def support_user_unread(self, user_id):
+        return await self._val("SELECT COUNT(*) FROM support_messages "
+                               "WHERE user_id = ? AND sender = 'admin' AND NOT read_by_user", (user_id,)) or 0
+
+    async def support_admin_unread_total(self):
+        """Javob kutayotgan mijozlar soni (chap menyudagi belgi uchun)."""
+        return await self._val("SELECT COUNT(DISTINCT user_id) FROM support_messages "
+                               "WHERE sender = 'user' AND NOT read_by_admin") or 0
+
+    async def support_threads(self, search=None, only_unread=False, page=1, per_page=30):
+        where, args = ['TRUE'], []
+        if only_unread:
+            where.append('t.unread > 0')
+        if search:
+            like = f'%{search}%'
+            where.append('(u.first_name ILIKE ? OR u.username ILIKE ? OR u.phone_number ILIKE ? OR u.user_id::text = ?)')
+            args += [like, like, like, search.lstrip('#')]
+        base = f'''
+            FROM (SELECT user_id, MAX(id) AS last_id,
+                         COUNT(*) FILTER (WHERE sender = 'user' AND NOT read_by_admin) AS unread
+                  FROM support_messages GROUP BY user_id) t
+            JOIN users u ON u.user_id = t.user_id
+            JOIN support_messages m ON m.id = t.last_id
+            WHERE {' AND '.join(where)}'''
+        total = await self._val(f'SELECT COUNT(*) {base}', args)
+        rows = await self._all(
+            f'''SELECT u.user_id, u.first_name, u.username, u.phone_number, t.unread,
+                       m.body AS last_body, m.sender AS last_sender, m.created_at AS last_at
+                {base} ORDER BY (t.unread > 0) DESC, m.id DESC LIMIT ? OFFSET ?''',
+            args + [per_page, (max(page, 1) - 1) * per_page])
+        return {'items': rows, 'total': total, 'per_page': per_page}
+
+    async def support_thread(self, user_id, after=0):
+        """Admin uchun: bitta mijozning suhbati. Ochilgan zahoti mijoz xabarlari 'o'qilgan' bo'ladi."""
+        rows = await self._all(
+            '''SELECT * FROM (SELECT id, sender, body, created_at FROM support_messages
+               WHERE user_id = ? AND id > ? ORDER BY id DESC LIMIT 300) t ORDER BY id''', (user_id, after))
+        if any(r['sender'] == 'user' for r in rows):
+            await self._exec("UPDATE support_messages SET read_by_admin = TRUE "
+                             "WHERE user_id = ? AND sender = 'user' AND NOT read_by_admin", (user_id,))
+        return rows
+
+    async def support_user_card(self, user_id):
+        """Mijozning to'liq ma'lumoti: profil, statistika, oxirgi buyurtmalar, saqlangan manzillar."""
+        u = await self._one('SELECT * FROM users WHERE user_id = ?', (user_id,))
+        if not u:
+            return None
+        st = await self.get_user_stats(user_id)
+        orders = await self._all(
+            'SELECT id, status, total_price, address, phone_number, created_at FROM orders '
+            'WHERE user_id = ? ORDER BY id DESC LIMIT 5', (user_id,))
+        addrs = await self._all(
+            'SELECT title, address FROM addresses WHERE user_id = ? ORDER BY is_default DESC, id LIMIT 5', (user_id,))
+        return {**u, 'stats': st, 'orders': orders, 'addresses': addrs}
 
     # ------------------------------------------------------------ admin: statistika
     async def get_today_stats(self):

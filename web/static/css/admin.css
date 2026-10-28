@@ -122,3 +122,30 @@ table.fixed { table-layout: fixed; min-width: 640px; }
 #oe select { flex: 1; min-width: 0; }
 #oe select { background: #0c1424; color: var(--text, #e8eefc); border: 1px solid rgba(96,165,250,.28); border-radius: 12px; padding: 12px 14px; font: inherit; font-size: 15px; outline: none; color-scheme: dark; }
 #oe select:focus { border-color: #4f8dff; }
+
+/* ===== Murojaatlar (admin chat) ===== */
+.sup-admin { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 14px; height: calc(100vh - 150px); min-height: 460px; }
+.sa-list { overflow-y: auto; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.sa-item { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px; border-radius: 14px; text-align: left; transition: background .15s; }
+.sa-item:hover { background: var(--surface-2); } .sa-item.on { background: rgba(76, 141, 255, .14); }
+.sa-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sa-txt b { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sa-txt small { color: var(--muted); font-size: 12px; }
+.sa-txt em { font-style: normal; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.sa-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; } .sa-meta small { color: var(--muted); font-size: 11px; }
+.sa-chat { display: flex; flex-direction: column; min-height: 0; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 14px; overflow: hidden; }
+.sa-chat > .empty { margin: auto; }
+.sa-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.sa-head a, .sa-grid a { color: var(--accent-2); text-decoration: none; }
+.sa-back { display: none; width: 36px; height: 36px; place-items: center; }
+.sa-info { margin: 10px 0 6px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); font-size: 13.5px; max-height: 34%; overflow-y: auto; }
+.sa-info summary { cursor: pointer; font-weight: 700; color: var(--accent-2); }
+.sa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 16px; margin-top: 10px; }
+.sa-grid span, .sa-sub > span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
+.sa-sub { margin-top: 12px; display: grid; gap: 5px; } .sa-sub > div { font-size: 13px; }
+.sa-chat .sup-list { padding-top: 10px; }
+@media (max-width: 900px) {
+    .sup-admin { grid-template-columns: 1fr; height: calc(100vh - 210px); }
+    .sup-admin .sa-chat { display: none; } .sup-admin.chat-open .sa-chat { display: flex; } .sup-admin.chat-open .sa-list { display: none; }
+    .sa-back { display: grid; }
+}

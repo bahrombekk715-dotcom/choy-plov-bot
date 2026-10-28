@@ -20,6 +20,7 @@ const view = $('view');
     pruneCart();
     bindShell();
     renderAll();
+    setSupportUnread(S.me.support_unread || 0);
 })();
 
 // ============================================================ lokatsiya (faqat foydalanuvchi tugma bossa so'raladi)
@@ -437,8 +438,10 @@ async function renderProfile() {
             <div class="addr-actions"><button class="icon-btn" data-edit="${a.id}" aria-label="${esc(t('w_edit'))}">${icon('edit')}</button>
                 <button class="icon-btn" data-del="${a.id}" aria-label="${esc(t('w_delete'))}">${icon('trash')}</button></div></div>`).join('')
             : `<div class="empty" style="padding:26px">${icon('location', 'xl')}<p>${esc(t('w_no_addresses'))}</p></div>`}</div>
-        ${supportBlock(me.support)}
+        ${supportBlock(me)}
         ${me.is_admin ? `<a class="btn block" style="margin-top:18px;text-decoration:none" href="/admin">${icon('shield')} ${esc(t('w_admin_panel'))}</a>` : ''}`;
+    $('support-open').onclick = openSupportChat;
+    setSupportUnread(S.me.support_unread || 0); refreshSupportDot();
     const sup = $('support-tg');
     if (sup) sup.onclick = (ev) => {              // Telegram ichida bo'lsa chatni ilovaning o'zida ochadi
         if (tg && tg.openTelegramLink) { ev.preventDefault(); tg.openTelegramLink(sup.href); }
@@ -452,13 +455,95 @@ async function renderProfile() {
         await api(`/api/addresses/${b.dataset.del}`, { method: 'DELETE' }); renderProfile();
     });
 }
-function supportBlock(sp) {
-    if (!sp || (!sp.username && !sp.phone)) return '';
+function supportBlock(me) {
+    const sp = me.support || {}, un = me.support_unread || 0;
     const tel = (sp.phone || '').replace(/[^\d+]/g, '');
-    return `<div class="sec-head" style="margin-top:22px"><h3>${esc(t('w_support'))}</h3></div>
-        <p class="muted" style="margin:0 0 10px">${esc(t('w_support_hint'))}</p>
-        ${sp.username ? `<a class="btn block" id="support-tg" style="margin-bottom:8px;text-decoration:none" href="https://t.me/${esc(sp.username)}" target="_blank" rel="noopener">${icon('bell')} ${esc(t('w_support_tg'))}</a>` : ''}
-        ${tel ? `<a class="btn block" style="text-decoration:none" href="tel:${esc(tel)}">${icon('phone')} ${esc(t('w_support_call'))} · ${esc(sp.phone)}</a>` : ''}`;
+    return `<div class="sup-card"><span class="tile big">${icon('bell', 'lg')}</span>
+            <div class="txt"><b>${esc(t('w_support_title'))}</b><p>${esc(t('w_support_hint'))}</p></div></div>
+        <button class="btn primary block" id="support-open">${icon('edit')} ${esc(t('w_support_write'))}<i class="sup-badge ${un ? '' : 'hidden'}" id="support-badge">${un} ${esc(t('w_support_new'))}</i></button>
+        ${sp.username || tel ? `<div class="addr-chips" style="margin-top:10px">
+            ${sp.username ? `<a class="chip sm" id="support-tg" href="https://t.me/${esc(sp.username)}" target="_blank" rel="noopener" style="text-decoration:none">${icon('globe')}Telegram</a>` : ''}
+            ${tel ? `<a class="chip sm" href="tel:${esc(tel)}" style="text-decoration:none">${icon('phone')}${esc(sp.phone)}</a>` : ''}</div>` : ''}`;
+}
+
+// ---- qo'llab-quvvatlash chati: mijoz yozadi, admin admin panelda javob beradi
+function setSupportUnread(n) {
+    S.me.support_unread = n;
+    const b = $('support-badge');
+    if (b) { b.textContent = n + ' ' + t('w_support_new'); b.classList.toggle('hidden', !n); }
+    const tab = document.querySelector('#tabs [data-tab="profile"]');
+    if (tab) tab.classList.toggle('has-dot', n > 0);
+}
+async function refreshSupportDot() {
+    if (!S.me.registered || document.hidden) return;
+    try { setSupportUnread((await api('/api/support/unread')).count); } catch (e) {}
+}
+setInterval(refreshSupportDot, 30000);
+document.addEventListener('visibilitychange', refreshSupportDot);
+
+function openSupportChat() {
+    const sh = openSheet(`<h2>${icon('bell')} ${esc(t('w_support_title'))}</h2>
+        <div class="sup-sub">${esc(t('w_support_sub'))}</div>
+        <div class="sup-wrap">
+            <div class="sup-list" id="sup-list"><div class="skeleton" style="height:54px;width:70%"></div></div>
+            <div class="sup-compose">
+                <textarea id="sup-in" rows="1" maxlength="1000" placeholder="${esc(t('w_support_ph'))}" aria-label="${esc(t('w_support_ph'))}"></textarea>
+                <button class="sup-send" id="sup-send" aria-label="${esc(t('w_support_send'))}">${icon('chevron')}</button>
+            </div>
+        </div>`);
+    const list = $('sup-list'), input = $('sup-in');
+    let lastId = 0, timer = null, sending = false;
+    const timeOf = (s) => { const d = parseDate(s); return isNaN(d) ? '' : d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); };
+    const bubble = (m, tmp) => `<div class="bub ${m.sender === 'user' ? 'me' : 'them'} ${tmp ? 'tmp' : ''}" ${tmp ? 'data-tmp="1"' : `data-id="${m.id}"`}>
+        ${m.sender === 'admin' ? `<b class="b-name">${esc(t('w_support_admin'))}</b>` : ''}<span>${esc(m.body)}</span><small>${tmp ? '…' : esc(timeOf(m.created_at))}</small></div>`;
+    const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    const toBottom = () => { list.scrollTop = list.scrollHeight; };
+    const showEmpty = () => { if (!list.querySelector('.bub')) list.innerHTML = `<div class="sup-empty">${icon('bell', 'xl')}<p>${esc(t('w_support_empty'))}</p></div>`; };
+    const add = (msgs) => {
+        const fresh = msgs.filter(m => m.id > lastId);
+        if (!fresh.length) return;
+        const stick = atBottom() || lastId === 0;
+        list.querySelectorAll('.sup-empty, .skeleton').forEach(x => x.remove());
+        list.insertAdjacentHTML('beforeend', fresh.map(m => bubble(m)).join(''));
+        lastId = fresh[fresh.length - 1].id;
+        if (stick) toBottom();
+    };
+    const poll = async () => {
+        if (!$('sup-list')) { clearInterval(timer); return; }         // oyna yopilgan
+        if (document.hidden) return;
+        try { const r = await api(`/api/support?after=${lastId}`); add(r.messages); setSupportUnread(0); } catch (e) {}
+    };
+    (async () => {
+        try { const r = await api('/api/support?after=0'); list.innerHTML = ''; add(r.messages); setSupportUnread(0); }
+        catch (e) { list.innerHTML = ''; }
+        showEmpty();
+        input.focus();
+        timer = setInterval(poll, 4000);
+    })();
+    const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; };
+    input.addEventListener('input', grow);
+    const send = async () => {
+        const text = input.value.trim();
+        if (!text || sending) return;
+        sending = true; $('sup-send').disabled = true;
+        list.querySelectorAll('.sup-empty').forEach(x => x.remove());
+        list.insertAdjacentHTML('beforeend', bubble({ sender: 'user', body: text }, true));
+        input.value = ''; grow(); toBottom();
+        try {
+            const m = await api('/api/support', { method: 'POST', body: { text } });
+            list.querySelectorAll('[data-tmp]').forEach(x => x.remove());
+            add([m]); toBottom();
+        } catch (e) {
+            list.querySelectorAll('[data-tmp]').forEach(x => x.remove());
+            input.value = text; grow(); showEmpty();
+            toast(e.status === 429 ? t('w_support_slow') : t('w_error'), 'err');
+        }
+        sending = false; $('sup-send').disabled = false; input.focus();
+    };
+    $('sup-send').onclick = send;
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(hover: hover)').matches) { e.preventDefault(); send(); }   // kompyuterda Enter yuboradi, telefonda yangi qator
+    });
 }
 function openPhoneForm() {
     openSheet(`<h2>${icon('phone')} ${esc(t('w_edit_phone'))}</h2>
