@@ -30,3 +30,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Faqat lokal sinash uchun: ?dev_user=ID bilan Telegramsiz kirish (production'da o'chiq turishi kerak)
 DEV_MODE = os.getenv('DEV_MODE', '') == '1'
+
+# Mijozlar uchun "Qo'llab-quvvatlash" (profil sahifasida ko'rinadi). Ikkalasi ixtiyoriy.
+SUPPORT_USERNAME = os.getenv('SUPPORT_USERNAME', '').strip().lstrip('@')   # Telegram username, @siz
+SUPPORT_PHONE = os.getenv('SUPPORT_PHONE', '').strip()                      # masalan +998901234567
