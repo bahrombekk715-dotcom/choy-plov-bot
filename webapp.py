@@ -394,8 +394,6 @@ async def support_send(body: SupportIn, user=Depends(registered_user)):
     if await db.support_recent_user_count(user['user_id']) >= 20:
         raise HTTPException(429, 'too_many')
     msg = await db.support_add(user['user_id'], 'user', text)
-    if telegram_bot:
-        bg(notify.notify_support_to_admin(telegram_bot, dict(user), text))
     return msg
 
 
@@ -504,8 +502,6 @@ async def admin_support_reply(user_id: int, body: SupportIn, _=Depends(admin_dep
     if not await db.get_user(user_id):
         raise HTTPException(404, 'not_found')
     msg = await db.support_add(user_id, 'admin', text)
-    if telegram_bot:
-        bg(notify.notify_support_reply(telegram_bot, db, user_id, text))
     return msg
 
 

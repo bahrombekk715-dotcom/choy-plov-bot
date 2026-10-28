@@ -107,18 +107,3 @@ async def refresh_admin_message(bot, db, order, message_id=None):
     except Exception as e:      # "message is not modified" va h.k. — jiddiy emas
         logger.info("Admin message not refreshed: %s", e)
 
-
-async def notify_support_to_admin(bot, user, text):
-    """Mijoz qo'llab-quvvatlashga yozdi: adminga Telegramda qisqa xabar (javob admin panelda yoziladi)."""
-    from config import WEB_APP_URL
-    name = (user.get('first_name') if user else None) or "Noma'lum"
-    lines = [f"💬 Yangi murojaat", f"👤 {name}" + (f" @{user['username']}" if user and user.get('username') else '')]
-    if user and user.get('phone_number'):
-        lines.append(f"📱 {user['phone_number']}")
-    lines += ['', text[:600], '', f"↩️ Javob berish: {WEB_APP_URL}/admin"]
-    await notify_admin_text(bot, '\n'.join(lines))
-
-
-async def notify_support_reply(bot, db, user_id, text):
-    """Admin javobi mijozga uning tilida Telegramga yuboriladi."""
-    await send_to_user(bot, db, user_id, 'n_support_reply', text=text)

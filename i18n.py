@@ -130,10 +130,6 @@ S = {
     'w_order_done': ("Buyurtma qabul qilindi!", "Заказ принят!", "Order received!"),
     'w_order_number': ("Buyurtma raqami", "Номер заказа", "Order number"),
     'w_order_done_hint': ("Holati o'zgarsa Telegram orqali xabar beramiz.", "О смене статуса сообщим в Telegram.", "We'll notify you in Telegram when the status changes."),
-    'n_support_reply': (
-        "💬 Qo'llab-quvvatlash javobi:\n\n{text}\n\nYozishni davom ettirish uchun: Profil → Qo'llab-quvvatlash",
-        "💬 Ответ поддержки:\n\n{text}\n\nЧтобы продолжить: Профиль → Поддержка",
-        "💬 Support reply:\n\n{text}\n\nTo continue: Profile → Support"),
     'n_edited': (
         "✏️ #{id} buyurtmangiz tarkibi admin tomonidan o'zgartirildi.\n\n💰 Yangi jami: {total} so'm",
         "✏️ Состав заказа #{id} изменён администратором.\n\n💰 Новая сумма: {total} сум",
