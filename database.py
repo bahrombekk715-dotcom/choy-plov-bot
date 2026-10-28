@@ -220,11 +220,26 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_addresses_user ON addresses(user_id);
     '''
 
+    # Eski bazada jadval avval yaratilgan bo'lsa, CREATE TABLE IF NOT EXISTS yetishmayotgan ustunni qo'shmaydi.
+    COLUMN_FIXES = '''
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'uz';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS location_address TEXT;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS comment TEXT;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
+        ALTER TABLE orders ADD COLUMN IF NOT EXISTS admin_msg_id BIGINT;
+    '''
+
     async def create_tables(self):
         async with self.pool.acquire() as c:
             await c.execute('SELECT pg_advisory_lock($1)', LOCK_ID)
             try:
                 await c.execute(self.SCHEMA)
+                await c.execute(self.COLUMN_FIXES)
                 await self.seed_addons(c)
                 await self._seed_product_addons(c)
                 await self._migrate_legacy_images(c)
