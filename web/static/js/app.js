@@ -437,7 +437,12 @@ async function renderProfile() {
             <div class="addr-actions"><button class="icon-btn" data-edit="${a.id}" aria-label="${esc(t('w_edit'))}">${icon('edit')}</button>
                 <button class="icon-btn" data-del="${a.id}" aria-label="${esc(t('w_delete'))}">${icon('trash')}</button></div></div>`).join('')
             : `<div class="empty" style="padding:26px">${icon('location', 'xl')}<p>${esc(t('w_no_addresses'))}</p></div>`}</div>
+        ${supportBlock(me.support)}
         ${me.is_admin ? `<a class="btn block" style="margin-top:18px;text-decoration:none" href="/admin">${icon('shield')} ${esc(t('w_admin_panel'))}</a>` : ''}`;
+    const sup = $('support-tg');
+    if (sup) sup.onclick = (ev) => {              // Telegram ichida bo'lsa chatni ilovaning o'zida ochadi
+        if (tg && tg.openTelegramLink) { ev.preventDefault(); tg.openTelegramLink(sup.href); }
+    };
     $('addr-add').onclick = () => openAddressForm();
     $('phone-edit').onclick = openPhoneForm;
     view.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAddressForm(addrs.find(a => a.id === +b.dataset.edit)));
@@ -446,6 +451,14 @@ async function renderProfile() {
         if (!confirm(t('w_delete') + '?')) return;
         await api(`/api/addresses/${b.dataset.del}`, { method: 'DELETE' }); renderProfile();
     });
+}
+function supportBlock(sp) {
+    if (!sp || (!sp.username && !sp.phone)) return '';
+    const tel = (sp.phone || '').replace(/[^\d+]/g, '');
+    return `<div class="sec-head" style="margin-top:22px"><h3>${esc(t('w_support'))}</h3></div>
+        <p class="muted" style="margin:0 0 10px">${esc(t('w_support_hint'))}</p>
+        ${sp.username ? `<a class="btn block" id="support-tg" style="margin-bottom:8px;text-decoration:none" href="https://t.me/${esc(sp.username)}" target="_blank" rel="noopener">${icon('bell')} ${esc(t('w_support_tg'))}</a>` : ''}
+        ${tel ? `<a class="btn block" style="text-decoration:none" href="tel:${esc(tel)}">${icon('phone')} ${esc(t('w_support_call'))} · ${esc(sp.phone)}</a>` : ''}`;
 }
 function openPhoneForm() {
     openSheet(`<h2>${icon('phone')} ${esc(t('w_edit_phone'))}</h2>
