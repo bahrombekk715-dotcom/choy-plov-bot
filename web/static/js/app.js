@@ -458,9 +458,9 @@ async function renderProfile() {
 function supportBlock(me) {
     const sp = me.support || {}, un = me.support_unread || 0;
     const tel = (sp.phone || '').replace(/[^\d+]/g, '');
-    return `<div class="sup-card"><span class="tile big">${icon('bell', 'lg')}</span>
-            <div class="txt"><b>${esc(t('w_support_title'))}</b><p>${esc(t('w_support_hint'))}</p></div></div>
-        <button class="btn primary block" id="support-open">${icon('edit')} ${esc(t('w_support_write'))}<i class="sup-badge ${un ? '' : 'hidden'}" id="support-badge">${un} ${esc(t('w_support_new'))}</i></button>
+    return `<button class="sup-card" id="support-open"><span class="tile big">${icon('bell', 'lg')}</span>
+            <span class="txt"><b>${esc(t('w_support_title'))}</b><p>${esc(t('w_support_hint'))}</p></span>
+            <i class="sup-badge ${un ? '' : 'hidden'}" id="support-badge">${un} ${esc(t('w_support_new'))}</i>${icon('chevron')}</button>
         ${sp.username || tel ? `<div class="addr-chips" style="margin-top:10px">
             ${sp.username ? `<a class="chip sm" id="support-tg" href="https://t.me/${esc(sp.username)}" target="_blank" rel="noopener" style="text-decoration:none">${icon('globe')}Telegram</a>` : ''}
             ${tel ? `<a class="chip sm" href="tel:${esc(tel)}" style="text-decoration:none">${icon('phone')}${esc(sp.phone)}</a>` : ''}</div>` : ''}`;

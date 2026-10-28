@@ -358,3 +358,8 @@ h1, h2, h3 { letter-spacing: -.01em; line-height: 1.2; }
 .sup-send { flex: none; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: var(--accent-ink); transition: transform .15s, opacity .15s; }
 .sup-send:active { transform: scale(.92); } .sup-send:disabled { opacity: .5; }
 .avatar.sm { width: 40px; height: 40px; border-radius: 14px; font-size: 17px; }
+
+button.sup-card { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; border: 0; transition: transform .15s; }
+button.sup-card:active { transform: scale(.98); }
+button.sup-card .txt { flex: 1; } button.sup-card > .ic { color: var(--muted); flex: none; }
+button.sup-card .sup-badge { margin: 0; background: var(--accent); color: #fff; flex: none; }
